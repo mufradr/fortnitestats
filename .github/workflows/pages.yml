@@ -3,27 +3,47 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+  schedule:
+    - cron: '23 */2 * * *'
 permissions:
   contents: read
   pages: write
   id-token: write
 concurrency:
   group: pages
-  cancel-in-progress: true
+  cancel-in-progress: false
 jobs:
   deploy:
+    # Recurring paid API calls require an explicit repository variable opt-in.
+    if: github.event_name != 'schedule' || vars.OSIRION_SYNC_ENABLED == 'true'
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+      - name: Validate data pipeline
+        run: node --test tests/sync-data.test.mjs
+      - name: Refresh tournament snapshot
+        env:
+          OSIRION_API_KEY: ${{ secrets.OSIRION_API_KEY }}
+          OSIRION_EVENT_WINDOW_ID: ${{ vars.OSIRION_EVENT_WINDOW_ID }}
+        run: |
+          if [ -n "$OSIRION_API_KEY" ]; then
+            node scripts/sync-data.mjs
+          else
+            echo '::warning::OSIRION_API_KEY is not set; deploying the explicit unconfigured state.'
+          fi
       - name: Configure Pages
         uses: actions/configure-pages@v5
       - name: Prepare static site
         run: |
-          mkdir _site
+          mkdir -p _site/data
           cp index.html style.css app.js _site/
+          cp data/tournaments.json _site/data/
       - uses: actions/upload-pages-artifact@v3
         with:
           path: _site

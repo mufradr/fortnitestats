@@ -1,33 +1,54 @@
-const events = [
-  {name:'Champion Series',mode:'Duos',region:'Europe',day:'FRI',time:'18:00 UTC',tag:'FINALS',theme:'purple'},
-  {name:'Solo Victory Cup',mode:'Solo',region:'NA Central',day:'SAT',time:'22:00 UTC',tag:'OPEN',theme:'lime'},
-  {name:'Reload Rally',mode:'Squads',region:'Europe',day:'SUN',time:'17:00 UTC',tag:'OPEN',theme:'blue'},
-  {name:'Challenger Cup',mode:'Duos',region:'Asia',day:'FRI',time:'10:00 UTC',tag:'QUALIFIER',theme:'blue'},
-  {name:'Late Night Trials',mode:'Solo',region:'Europe',day:'SAT',time:'20:00 UTC',tag:'OPEN',theme:'purple'},
-  {name:'Squad Showdown',mode:'Squads',region:'NA Central',day:'SUN',time:'21:00 UTC',tag:'INVITATIONAL',theme:'lime'}
-];
-const players = [
-  {name:'NovaPulse',region:'Europe',wins:248,kd:6.42,rate:28.4},
-  {name:'ZeroBloom',region:'NA Central',wins:231,kd:5.91,rate:26.1},
-  {name:'VortexAce',region:'Europe',wins:219,kd:5.83,rate:24.8},
-  {name:'EchoDrift',region:'Asia',wins:204,kd:5.61,rate:23.6},
-  {name:'LunarRush',region:'NA Central',wins:192,kd:5.32,rate:22.9},
-  {name:'OrbitWave',region:'Europe',wins:186,kd:5.14,rate:21.5},
-  {name:'FrostByte',region:'Asia',wins:173,kd:4.98,rate:20.7},
-  {name:'SolarDash',region:'Europe',wins:165,kd:4.76,rate:19.8}
-];
-let mode='all', descending=true;
-const region=document.querySelector('#region');
-function renderEvents(){
- const visible=events.filter(e=>(mode==='all'||e.mode===mode)&&(region.value==='all'||e.region===region.value));
- document.querySelector('#event-grid').innerHTML=visible.map(e=>`<article class="event ${e.theme}"><div class="event-art"><span class="event-tag">${e.tag}</span><span class="event-symbol" aria-hidden="true">${e.mode==='Solo'?'◈':e.mode==='Duos'?'⟐':'✦'}</span><span class="sample">SAMPLE EVENT</span></div><div class="event-content"><p>${e.region} <span>• ${e.mode}</span></p><h3>${e.name}</h3><div class="event-bottom"><span>${e.day} <b>${e.time}</b></span><button class="save" data-event="${e.name}" aria-pressed="${saved.includes(e.name)}" aria-label="${saved.includes(e.name)?'Unsave':'Save'} ${e.name}">${saved.includes(e.name)?'✓ Saved':'+ Save'}</button></div></div></article>`).join('')||'<p class="empty">No sample events for this region and mode. Try another filter.</p>';
+let snapshot={tournaments:[],players:[],windowId:null}, mode='all',descending=true;
+let saved=[];try{saved=JSON.parse(localStorage.getItem('dropzone-event-ids')||'[]');if(!Array.isArray(saved))saved=[];}catch{}
+const $=selector=>document.querySelector(selector);
+const escape=value=>String(value).replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+const regionNames={EU:'Europe',NAC:'NA Central',NAE:'NA East',NAW:'NA West',ASIA:'Asia',OCE:'Oceania',BR:'Brazil',ME:'Middle East'};
+function describe(t){
+ const text=t.id+' '+t.eventId;
+ const region=Object.keys(regionNames).find(r=>new RegExp(`(?:^|_)${r}(?:_|$)`,'i').test(text))||'Unknown';
+ const mode=/solo/i.test(text)?'Solo':/duo/i.test(text)?'Duos':/squad/i.test(text)?'Squads':/trio/i.test(text)?'Trios':'Unspecified';
+ const type=/performance.?eval|evaluation|(?:^|_)eval/i.test(text)?'eval':/division|(?:^|_)div\d*/i.test(text)?'division':'other';
+ return {region,mode,type};
 }
-let saved=[];try{saved=JSON.parse(localStorage.getItem('dropzone-events')||'[]');if(!Array.isArray(saved))saved=[];}catch{saved=[];}
-region.addEventListener('change',renderEvents);
-document.querySelectorAll('[data-mode]').forEach(button=>button.addEventListener('click',()=>{mode=button.dataset.mode;document.querySelectorAll('[data-mode]').forEach(b=>{b.classList.toggle('active',b===button);b.setAttribute('aria-pressed',String(b===button));});renderEvents();}));
-document.querySelector('#event-grid').addEventListener('click',e=>{const button=e.target.closest('[data-event]');if(!button)return;const name=button.dataset.event;saved=saved.includes(name)?saved.filter(n=>n!==name):[...saved,name];try{localStorage.setItem('dropzone-events',JSON.stringify(saved));}catch{}renderEvents();const replacement=[...document.querySelectorAll('[data-event]')].find(b=>b.dataset.event===name);replacement?.focus();});
-function renderPlayers(){const query=document.querySelector('#player-search').value.trim().toLowerCase();const ranked=[...players].sort((a,b)=>b.wins-a.wins);const visible=ranked.filter(p=>p.name.toLowerCase().includes(query)).sort((a,b)=>descending?b.wins-a.wins:a.wins-b.wins);document.querySelector('#player-rows').innerHTML=visible.map(p=>`<tr><td class="rank">${String(ranked.indexOf(p)+1).padStart(2,'0')}</td><td><span class="avatar">${p.name.slice(0,2).toUpperCase()}</span><strong>${p.name}</strong></td><td>${p.region}</td><td class="wins">${p.wins}</td><td>${p.kd.toFixed(2)}</td><td>${p.rate.toFixed(1)}%</td></tr>`).join('');document.querySelector('#empty-players').hidden=visible.length>0;document.querySelector('#sort-wins').closest('th').setAttribute('aria-sort',descending?'descending':'ascending');}
-document.querySelector('#player-search').addEventListener('input',renderPlayers);
-document.querySelector('#sort-wins').addEventListener('click',e=>{descending=!descending;e.target.textContent=`Wins ${descending?'↓':'↑'}`;renderPlayers();});
-document.querySelector('#lookup-form').addEventListener('submit',e=>{e.preventDefault();const name=document.querySelector('#epic-name').value.trim();if(name)window.open(`https://fortnitetracker.com/profile/all/${encodeURIComponent(name)}`,'_blank','noopener,noreferrer');});
-renderEvents();renderPlayers();
+function renderEvents(){
+ const visible=snapshot.tournaments.filter(t=>{const d=describe(t);return (mode==='all'||d.mode===mode)&&($('#region').value==='all'||d.region===$('#region').value)&&($('#event-type').value==='all'||d.type===$('#event-type').value);}).sort((a,b)=>Date.parse(b.start)-Date.parse(a.start));
+ $('#event-grid').innerHTML=visible.map(t=>{const d=describe(t),start=new Date(t.start),end=new Date(t.end),now=Date.now();const state=now<start?'UPCOMING':now<=end?'IN PROGRESS':'COMPLETED';return `<article class="event ${d.type==='eval'?'lime':d.type==='division'?'purple':'blue'}"><div class="event-art"><span class="event-tag">${state}</span><span class="event-symbol" aria-hidden="true">✦</span><span class="sample">REPLAY INDEX · ${escape(d.type==='eval'?'EVAL CUP':d.type==='division'?'DIVISION CUP':'TOURNAMENT')}</span></div><div class="event-content"><p>${escape(regionNames[d.region]||d.region)} <span>• ${escape(d.mode)}</span></p><h3 class="event-title">${escape(t.eventId.replace(/^epicgames_/,'').replaceAll('_',' '))}</h3><p class="window-id">${escape(t.id)}</p><p>${t.matches??'—'} indexed matches</p><div class="event-bottom"><time datetime="${escape(t.start)}">${escape(start.toLocaleString(undefined,{month:'short',day:'numeric',hour:'2-digit',minute:'2-digit',timeZoneName:'short'}))}</time><button class="save" data-event="${escape(t.id)}" aria-pressed="${saved.includes(t.id)}" aria-label="${saved.includes(t.id)?'Unsave':'Save'} ${escape(t.id)}">${saved.includes(t.id)?'✓ Saved':'+ Save'}</button></div></div></article>`;}).join('')||'<p class="empty">No indexed sessions match these filters. Coverage depends on available replays; this is not the complete Fortnite schedule.</p>';
+}
+const fmt=(value,digits=0)=>value===null||value===undefined?'—':Number(value).toLocaleString(undefined,{maximumFractionDigits:digits});
+function renderPlayers(){
+ const query=$('#player-search').value.trim().toLowerCase();
+ const players=$('#session').value===snapshot.windowId?snapshot.players:[];
+ const ranked=[...players].sort((a,b)=>(b.eliminations??-1)-(a.eliminations??-1));
+ const visible=ranked.filter(p=>p.name.toLowerCase().includes(query)||p.id.toLowerCase().includes(query));if(!descending)visible.reverse();
+ $('#player-rows').innerHTML=visible.map(p=>`<tr><td class="rank">${ranked.indexOf(p)+1}</td><td><span class="avatar">${escape(p.name.slice(0,2).toUpperCase())}</span><strong>${escape(p.name)}</strong></td><td>${fmt(p.matches)}</td><td class="wins">${fmt(p.eliminations)}</td><td>${fmt(p.avgPlacement,2)}</td><td>${fmt(p.damage)}</td></tr>`).join('');
+ $('#empty-players').hidden=visible.length>0;
+ $('#empty-players').textContent=query?'No players match your search.':'No player snapshot for this session. Select the published session, or configure its event window for the next data refresh.';
+ $('#sort-eliminations').closest('th').setAttribute('aria-sort',descending?'descending':'ascending');
+ $('#coverage').textContent='Replay-derived statistics, sorted by eliminations—not official points standings. Only matches parsed by Osirion are included; absent metrics appear as —.';
+}
+for(const id of ['#region','#event-type'])$(id).addEventListener('change',renderEvents);
+$('#session').addEventListener('change',renderPlayers);
+document.querySelectorAll('[data-mode]').forEach(b=>b.addEventListener('click',()=>{mode=b.dataset.mode;document.querySelectorAll('[data-mode]').forEach(x=>{x.classList.toggle('active',x===b);x.setAttribute('aria-pressed',String(x===b));});renderEvents();}));
+$('#event-grid').addEventListener('click',e=>{const b=e.target.closest('[data-event]');if(!b)return;const id=b.dataset.event;saved=saved.includes(id)?saved.filter(n=>n!==id):[...saved,id];try{localStorage.setItem('dropzone-event-ids',JSON.stringify(saved));}catch{}renderEvents();[...document.querySelectorAll('[data-event]')].find(x=>x.dataset.event===id)?.focus();});
+$('#player-search').addEventListener('input',renderPlayers);
+$('#sort-eliminations').addEventListener('click',e=>{descending=!descending;e.target.textContent=`Eliminations ${descending?'↓':'↑'}`;renderPlayers();});
+$('#lookup-form').addEventListener('submit',e=>{e.preventDefault();const name=$('#epic-name').value.trim();if(name)window.open(`https://fortnitetracker.com/profile/all/${encodeURIComponent(name)}`,'_blank','noopener,noreferrer');});
+async function load(){
+ try{
+ const response=await fetch('./data/tournaments.json',{cache:'no-store'});if(!response.ok)throw Error('Data file unavailable');const data=await response.json();
+ if(data.schemaVersion!==1||!Array.isArray(data.tournaments)||!Array.isArray(data.players))throw Error('Invalid data file');
+ if(data.status!=='ok'){$('.notice').textContent='Data source not connected. An Osirion API key and credits are required to publish real tournament sessions. No sample results are displayed.';return;}
+ if(!Number.isFinite(Date.parse(data.updatedAt)))throw Error('Invalid refresh date');
+ snapshot=data;
+ const stale=Date.now()-Date.parse(data.updatedAt)>3*3600000;
+ $('.pill').textContent=stale?'● STALE SNAPSHOT':'● OSIRION SNAPSHOT';
+ $('.notice').textContent=`${stale?'Data is older than 3 hours. ':''}Osirion replay index · Updated ${new Date(data.updatedAt).toLocaleString()} · Recent sessions, not a complete upcoming schedule. Eval and Division Cups appear when indexed. Not a live feed.`;
+ $('.metrics article:nth-child(1) strong').innerHTML=`${data.tournaments.length} <small>IN THE SNAPSHOT</small>`;
+ $('.metrics article:nth-child(2) strong').innerHTML=`${data.players.length} <small>REPLAY COVERAGE</small>`;
+ const sessions=[...new Set([data.windowId,...data.tournaments.map(t=>t.id)].filter(Boolean))];
+ $('#session').innerHTML='<option value="">Select a session</option>'+sessions.map(id=>`<option value="${escape(id)}">${escape(id)}${id===data.windowId?' · stats available':''}</option>`).join('');
+ if(data.windowId)$('#session').value=data.windowId;
+ }catch{$('.notice').textContent='Tournament data could not be loaded. Try again later. No invented results are shown.';$('.pill').textContent='● DATA UNAVAILABLE';}
+ finally{renderEvents();renderPlayers();}
+}
+load();

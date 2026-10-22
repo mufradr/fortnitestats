@@ -2,9 +2,9 @@
 
 Static site with a direct Epic Games Events Service adapter. No Osirion, paid provider, or fabricated tournament data is used. It supports event windows (including Eval and Division Cups returned by Epic), region/mode/type filtering, saved sessions, and bounded official team standings for active/recent sessions.
 
-## Fix GitHub Pages: required once
+## GitHub Pages
 
-The existing deployment failed at `actions/configure-pages` because GitHub returned **Get Pages site failed / Not Found**. The repository has not enabled Pages for Actions.
+Pages is enabled and the public URL has been verified to return HTTP 200. The workflow publishes the static site and collected data. For a new repository, configure it as follows:
 
 1. Open https://github.com/mufradr/fortnitestats/settings/pages.
 2. Under **Build and deployment → Source**, select **GitHub Actions**.

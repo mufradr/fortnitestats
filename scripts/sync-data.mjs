@@ -1,39 +1,35 @@
-import {mkdir, writeFile, rename} from 'node:fs/promises';
+import {mkdir,writeFile,rename} from 'node:fs/promises';
+import {dirname} from 'node:path';
 import {pathToFileURL} from 'node:url';
-
-const HOST = 'https://api.osirion.gg';
-export function normalizeTournaments(body) {
-  if (!Array.isArray(body?.tournaments)) throw new Error('Invalid Osirion tournaments response');
-  return body.tournaments.map(t => {
-    if (typeof t.eventId !== 'string' || typeof t.eventWindowId !== 'string' || !Number.isFinite(t.startTime) || !Number.isFinite(t.endTime)) throw new Error('Invalid tournament record');
-    return {id:t.eventWindowId,eventId:t.eventId,start:new Date(t.startTime*1000).toISOString(),end:new Date(t.endTime*1000).toISOString(),matches:Number.isFinite(t.totalMatches)?t.totalMatches:null,progress:Number.isFinite(t.parsingProgress)?t.parsingProgress:null};
+const HOST='https://events-public-service-live.ol.epicgames.com';
+export function normalizeTournaments(body){
+ if(!Array.isArray(body?.events))throw Error('Invalid Epic events response');
+ const templates=new Map((body.templates||[]).map(t=>[t.eventTemplateId,t]));
+ return body.events.flatMap(e=>{
+  if(typeof e.eventId!=='string'||!Array.isArray(e.eventWindows))throw Error('Invalid Epic event');
+  return e.eventWindows.filter(w=>w.visibility!=='private').map(w=>{
+   if(typeof w.eventWindowId!=='string'||!Number.isFinite(Date.parse(w.beginTime))||!Number.isFinite(Date.parse(w.endTime)))throw Error('Invalid Epic event window');
+   return {id:w.eventWindowId,eventId:e.eventId,start:w.beginTime,end:w.endTime,regions:Array.isArray(e.regions)?e.regions:[],playlist:templates.get(w.eventTemplateId)?.playlistId||null,round:w.round??null};
   });
+ });
 }
-export function normalizePlayers(body) {
-  if (!Array.isArray(body?.players)) throw new Error('Invalid Osirion player response');
-  return body.players.map(p=>{
-    if(typeof p.epicId!=='string') throw new Error('Invalid player record');
-    const metric=k=>Number.isFinite(p[k])&&p[k]>=0?p[k]:null;
-    return {id:p.epicId,name:typeof p.epicUsername==='string'&&p.epicUsername?p.epicUsername:p.epicId,matches:metric('matchesPlayed'),eliminations:metric('eliminations'),avgPlacement:metric('avgPlacement'),damage:metric('damageToPlayers')};
-  });
+export function normalizePlayers(body){
+ if(!Array.isArray(body?.entries))throw Error('Invalid Epic leaderboard response');
+ return body.entries.map(e=>{
+  if(!Array.isArray(e.teamAccountIds)||!e.teamAccountIds.length||e.teamAccountIds.some(id=>typeof id!=='string')||!Number.isFinite(e.rank))throw Error('Invalid Epic leaderboard entry');
+  return {id:e.teamId||e.teamAccountIds.join(':'),name:e.teamAccountIds.join(' / '),rank:e.rank,points:Number.isFinite(e.pointsEarned)?e.pointsEarned:null,teamSize:e.teamAccountIds.length,matches:Array.isArray(e.sessionHistory)?e.sessionHistory.length:null};
+ });
 }
-export async function sync({key,windowId='',fetcher=fetch,now=new Date(),output='data/tournaments.json'}={}) {
-  if (!key) throw new Error('OSIRION_API_KEY is required; configure it as a GitHub Actions secret');
-  const request=async(path,params)=>{
-    const response=await fetcher(`${HOST}${path}?${new URLSearchParams(params)}`,{headers:{Authorization:`Bearer ${key}`,Accept:'application/json'},signal:AbortSignal.timeout(30000)});
-    // Never log response bodies or authorization headers.
-    if(!response.ok)throw new Error(`Osirion returned HTTP ${response.status}; check API access and credit balance`);
-    return response.json();
-  };
-  // Bounded requests: one page of replay-indexed tournaments, and optionally one player page.
-  const tournaments=normalizeTournaments(await request('/fortnite/v1/tournaments',{fromUnix:Math.floor(now.getTime()/1000)-14*86400,toUnix:Math.floor(now.getTime()/1000),fromIndex:0,limit:50}));
-  const players=windowId?normalizePlayers(await request('/fortnite/v1/tournaments/stats',{eventWindowId:windowId,limit:100,fromIndex:0})):[];
-  const snapshot={schemaVersion:1,status:'ok',source:'Osirion public API',updatedAt:now.toISOString(),windowId:windowId||null,tournaments,players};
-  await mkdir(new URL('../data/',import.meta.url),{recursive:true});
-  await writeFile(`${output}.tmp`,JSON.stringify(snapshot,null,2)+'\n');
-  await rename(`${output}.tmp`,output);
-  return snapshot;
+export async function sync({token,accountId,region='EU',windowId='',eventId='',fetcher=fetch,now=new Date(),output='data/tournaments.json'}={}){
+ if(!token||!accountId)throw Error('EPIC_ACCESS_TOKEN and EPIC_ACCOUNT_ID are required for direct Epic access');
+ if(!/^[a-f0-9]{32}$/i.test(accountId))throw Error('EPIC_ACCOUNT_ID must be a 32-character Epic account ID');
+ if(!['EU','NAC','NAE','NAW','ASIA','OCE','BR','ME'].includes(region))throw Error('Invalid EPIC_REGION');
+ const request=async(path,params)=>{const r=await fetcher(`${HOST}${path}?${new URLSearchParams(params)}`,{headers:{Authorization:`Bearer ${token}`,Accept:'application/json'},signal:AbortSignal.timeout(30000)});if(!r.ok)throw Error(`Epic returned HTTP ${r.status}; verify token expiry, Fortnite scopes, and account access`);return r.json();};
+ const tournaments=normalizeTournaments(await request(`/api/v1/events/Fortnite/download/${accountId}`,{region,platform:'Windows',teamAccountIds:accountId}));
+ const selected=windowId?tournaments.find(t=>t.id===windowId&&(!eventId||t.eventId===eventId)):null;
+ if(windowId&&!selected)throw Error('EPIC_EVENT_WINDOW_ID is not in this region’s event list');
+ const leaderboard=selected?await request(`/api/v1/leaderboards/Fortnite/${encodeURIComponent(selected.eventId)}/${encodeURIComponent(windowId)}/${accountId}`,{page:0,showLiveSessions:false,appId:'fortnite'}):null;
+ const snapshot={schemaVersion:2,status:'ok',source:'Epic Games Events Service',updatedAt:now.toISOString(),windowId:selected?.id||null,region,tournaments,players:leaderboard?normalizePlayers(leaderboard):[],totalPages:leaderboard?.totalPages??null};
+ await mkdir(dirname(output),{recursive:true});await writeFile(`${output}.tmp`,JSON.stringify(snapshot,null,2)+'\n');await rename(`${output}.tmp`,output);return snapshot;
 }
-if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href){
-  sync({key:process.env.OSIRION_API_KEY,windowId:process.env.OSIRION_EVENT_WINDOW_ID||''}).then(s=>console.log(`Published ${s.tournaments.length} tournament windows and ${s.players.length} player rows`)).catch(e=>{console.error(e.message);process.exitCode=1;});
-}
+if(process.argv[1]&&import.meta.url===pathToFileURL(process.argv[1]).href){sync({token:process.env.EPIC_ACCESS_TOKEN,accountId:process.env.EPIC_ACCOUNT_ID,region:process.env.EPIC_REGION||'EU',windowId:process.env.EPIC_EVENT_WINDOW_ID||''}).then(s=>console.log(`Published ${s.tournaments.length} Epic sessions and ${s.players.length} leaderboard teams`)).catch(e=>{console.error(e.message);process.exitCode=1;});}

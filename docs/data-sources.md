@@ -1,29 +1,31 @@
-# Fortnite data sources and integration decisions
+# Independent Epic data integration
 
-Research date: 2026-10-22.
+Updated 2026-10-22. The previous Osirion adapter has been removed at the user's request.
 
-## What could be verified
+## Data source
 
-**Osirion:** the publisher-maintained [`@osirion/api` package](https://www.npmjs.com/package/@osirion/api), version 2.0.1, documents replay uploads, parsed match data, and tournament player statistics derived from server replays. Its README explicitly demonstrates `S34_PerformanceEvaluation_Event1Round1_EU`. Its shipped implementation and TypeScript types define:
+The implementation uses Epic's own Events Service:
 
-- `GET https://api.osirion.gg/fortnite/v1/tournaments` → `{ tournaments: [{ eventId, eventWindowId, startTime, endTime, totalMatches, parsingProgress }] }`.
-- `GET https://api.osirion.gg/fortnite/v1/tournaments/stats?eventWindowId=…` → `{ players: […] }`, including `epicId`, `epicUsername`, `matchesPlayed`, `eliminations`, `avgPlacement`, and `damageToPlayers`.
-- Authentication: `Authorization: Bearer <API key>`. The account requires API credits; request charges and pricing are controlled by Osirion and may change. Account/API configuration: https://osirion.gg/app/settings. Review https://osirion.gg/legal for permitted publication and usage before enabling.
+- `GET https://events-public-service-live.ol.epicgames.com/api/v1/events/Fortnite/download/{accountId}?region=EU&platform=Windows&teamAccountIds={accountId}`: event definitions, sessions, and templates.
+- `GET https://events-public-service-live.ol.epicgames.com/api/v1/leaderboards/Fortnite/{eventId}/{eventWindowId}/{accountId}?page=0&showLiveSessions=false&appId=fortnite`: official team standings.
 
-This is evidence for replay-based statistics, not evidence that Osirion offers complete official points standings, every event, every player, or a complete upcoming calendar. The site therefore calls this a recent replay index and never synthesizes wins, K/D, points, or win rates from unrelated fields.
+Both require an authorized Epic bearer token with appropriate Fortnite account/profile scopes. Direct Epic access is independent of Osirion, but it is not an unauthenticated public API. Session expiration and access restrictions must be respected. No borrowed application credentials or authentication bypass is implemented.
 
-**Epic Games:** the community-maintained [FortniteEndpointsDocumentation](https://github.com/LeleDerGrasshalmi/FortniteEndpointsDocumentation/tree/6fc50b2c43aac4e0abf39132dbe088555162121e/EpicGames/EventsService) describes Epic's Events Service: event definitions/windows and window leaderboards. Both require scoped authentication. This documents the underlying tournament data model, but does not establish which private integrations Tracker or Osirion use. The same repository documents an unauthenticated Fortnite competitive website events route. That route's current response and availability could not be verified, so it is not integrated as though it were tested.
+Community references inspected:
 
-**Fortnite Tracker:** the historical third-party [`fortnite` npm package](https://www.npmjs.com/package/fortnite) points to https://fortnitetracker.com/site-api and requires a Tracker API key for player statistics. This is historical evidence only; it does not establish present availability, tournament support, or Tracker's internal ingestion architecture. The direct Tracker developer documentation was inaccessible in this environment. No Tracker private web endpoints, scraping, authentication bypass, or unsupported API claims are used here. Player lookup remains an external link.
+- [Event download schema](https://github.com/LeleDerGrasshalmi/FortniteEndpointsDocumentation/blob/6fc50b2c43aac4e0abf39132dbe088555162121e/EpicGames/EventsService/Events/Data/Download.md).
+- [Official-service leaderboard route](https://github.com/LeleDerGrasshalmi/FortniteEndpointsDocumentation/blob/6fc50b2c43aac4e0abf39132dbe088555162121e/EpicGames/EventsService/Events/Leaderboard.md).
+- [fnbr.js TournamentManager](https://github.com/fnbrjs/fnbr.js/blob/master/src/managers/TournamentManager.ts) independently uses the download route with the user's Fortnite session.
+- [fnbr.js response types](https://github.com/fnbrjs/fnbr.js/blob/master/resources/httpResponses.ts) describe leaderboard ranks, `pointsEarned`, team account IDs, and session history. These are community references, not an Epic guarantee of API stability.
 
-## Verification limits
+Osirion's published SDK documents replay ingestion and server-replay-derived stats, which explains how it offers match-level analytics beyond standard leaderboard points. This does not prove its entire internal architecture or Tracker's data pipeline. Reproducing such analytics independently would additionally require authorized replay acquisition, replay parsing/version support, storage, and a backend; that infrastructure is not part of this static site. The implemented independent path is Epic tournament metadata and official standings.
 
-Direct requests to Tracker, Osirion, FortniteAPI.io, Fortnite-API, and Fortnite's documentation/websites were denied by this environment's egress proxy. The required domain additions were saved in the environment configuration draft. Public GitHub documentation and the official published Osirion SDK were accessible. No provider key was configured in the machine or environment metadata. Thus the adapter has contract tests based on published SDK fields, but no authenticated live-provider response has been validated. API fields or access may have changed since the published SDK; test a real refresh before relying on production data.
+## Pages failure diagnosis
 
-## GitHub Pages architecture
+[Deployment run 39856218670](https://github.com/mufradr/fortnitestats/actions/runs/39856218670) reports `Get Pages site failed ... Not Found` at Configure Pages. Pages must first be enabled by a repository administrator. The [official action configuration](https://github.com/actions/configure-pages/blob/v5/action.yml) explicitly says initial `enablement` requires a token other than the built-in `GITHUB_TOKEN`. A default workflow cannot fix this repository setting by itself. The workflow supports optional admin-token enablement and otherwise provides the exact Settings link on failure.
 
-A browser on GitHub Pages cannot safely hold provider secrets. A GitHub Actions job fetches data with the API key, selects only public fields, and includes `data/tournaments.json` in the Pages artifact. No private key is embedded in JavaScript, output JSON, or source control. Refresh failure fails deployment so a previously deployed snapshot stays intact, with its original timestamp. A run without a key publishes the explicit unconfigured state rather than fake results. Snapshots are not committed back to the repository.
+## Verified versus blocked
 
-One refresh makes one tournament request (first 50 windows in the last 14 days), plus one optional player request (first 100 records for the configured event window). This is bounded coverage, not an exhaustive leaderboard. Eval and Division filters classify provider identifiers; an unrecognized mode or region stays unspecified. The upstream index is replay-driven, so absent Eval/Division sessions cannot be inferred to be cancelled or nonexistent.
+Contract tests exercise documented event/window fields, official points mapping, bearer authentication, invalid selected windows, and failure preserving existing snapshots. Browser checks cover loading/disconnected states, filters, team table, escaped text, saved sessions, and mobile layout. Neither the current authenticated Epic route nor the live Pages URL can be verified from this environment: external destinations are blocked by its egress proxy, GitHub API access is blocked, and no Epic token is configured. Public GitHub action pages were readable and supplied the Pages error above. Required network domains were saved to the environment draft, which does not itself apply network changes.
 
-Automatic polling is disabled until `OSIRION_SYNC_ENABLED=true` is set in repository Actions variables. With that opt-in, the workflow refreshes approximately every two hours (GitHub schedules can be delayed). Pushes and manual dispatches refresh whenever an API key is configured and may consume credits. Disable recurring polling by removing or setting that variable to `false`. No billable API calls were made during implementation.
+No data refresh was performed with a real user credential. The site never labels fixtures or missing data as real results. Authentication setup and initial Pages enablement remain explicit external prerequisites.

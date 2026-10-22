@@ -1,38 +1,48 @@
-# Dropzone — Fortnite tournament statistics
+# Dropzone — independent Fortnite tournament tracker
 
-Static Fortnite tournament dashboard, configured for GitHub Pages. Displays recent Osirion-indexed tournament sessions, Eval/Performance Evaluation and Division Cup filters, region/mode filters, browser-local saved sessions, and searchable replay-derived player statistics for a selected event window.
+Static site with a direct Epic Games Events Service adapter. No Osirion, paid provider, or fabricated tournament data is used. It supports event windows (including Eval and Division Cups returned by Epic), region/mode/type filtering, saved sessions, and first-page official team standings for a selected session.
 
-**No fictional results.** Until a provider is configured, the site displays an explicit disconnected state. This integration indexes available replays; it is not a complete upcoming calendar, an official points leaderboard, or an instant live feed. See [source research and limitations](docs/data-sources.md).
+## Fix GitHub Pages: required once
 
-## Connect real data
+The existing deployment failed at `actions/configure-pages` because GitHub returned **Get Pages site failed / Not Found**. The repository has not enabled Pages for Actions.
 
-1. Create an [Osirion account](https://osirion.gg/app/settings), review its API terms, generate an API key, and fund API credits. Requests consume credits; current pricing is set by Osirion.
-2. In GitHub repository **Settings → Secrets and variables → Actions**, add a repository **secret** named `OSIRION_API_KEY`. Never put the key in source files or chat.
-3. Optionally add a repository **variable** `OSIRION_EVENT_WINDOW_ID` with the exact event window you want player stats for (obtain it from the tournament cards after the first refresh). The player table uses this one window. Without it, only the recent tournament index is fetched.
-4. Select **GitHub Actions** in **Settings → Pages → Build and deployment**.
-5. Run **Actions → Deploy to GitHub Pages → Run workflow**. Verify the refresh succeeds. Each refresh makes one tournament request and optionally one player request; the response is limited to 50 sessions and 100 player rows.
-6. For recurring refreshes, explicitly set the repository Actions **variable** `OSIRION_SYNC_ENABLED` to `true`. This enables paid refreshes roughly every two hours. Pushes/manual runs also refresh when the key exists. Remove/disable the variable to stop scheduled requests.
+1. Open https://github.com/mufradr/fortnitestats/settings/pages.
+2. Under **Build and deployment → Source**, select **GitHub Actions**.
+3. Open **Actions → Deploy to GitHub Pages** and rerun the latest workflow.
+4. After a successful deployment, visit https://mufradr.github.io/fortnitestats/.
 
-After deployment: https://mufradr.github.io/fortnitestats/. All assets and JSON paths support the Pages project subpath. Only public site assets and the sanitized data snapshot are deployed. Failed data refreshes fail deployment and leave the last deployed site intact. The UI exposes the snapshot timestamp and flags data older than three hours.
+This setting requires repository administrator access. The default workflow `GITHUB_TOKEN` cannot perform initial enablement. If you prefer automated enablement, a securely configured Actions secret `PAGES_ADMIN_TOKEN` with the required Pages/repository administrative permission enables the supported configure-pages option. Do not put tokens in source or chat. No custom domain is needed. Project-relative asset and JSON paths are used.
 
-## Local development
+Site deployment is independent of Epic authentication: missing/expired data credentials do not prevent HTML and assets from deploying. Without data credentials, the site explicitly says data is disconnected.
 
-No dependencies/build required. From the checkout:
+## Connect directly to Epic
+
+Epic provides tournament metadata and leaderboard data through its authenticated Events Service. An arbitrary Epic Online Services application token does **not** automatically grant access to Fortnite player/tournament services. You need a legitimately obtained Epic user session authorized for the Fortnite scopes, and its account ID. No third-party client secrets or extracted credentials are bundled here.
+
+In repository **Settings → Secrets and variables → Actions**:
+
+- Secret `EPIC_ACCESS_TOKEN`: an authorized, unexpired Epic bearer access token. Never share the token in chat or browser code.
+- Variable `EPIC_ACCOUNT_ID`: the matching 32-character Epic account ID.
+- Optional variable `EPIC_REGION`: `EU` (default), `NAC`, `NAE`, `NAW`, `ASIA`, `OCE`, `BR`, or `ME`.
+- Optional variable `EPIC_EVENT_WINDOW_ID`: an exact session ID from a tournament card. Its first standings page is fetched.
+- Optional variable `EPIC_SYNC_ENABLED=true`: enables approximately two-hour scheduled refreshes. This alone does not renew tokens.
+
+Run the Pages workflow manually after setting credentials. Access tokens expire: replace them through your own authorized Epic authentication process. Unattended token renewal is **not implemented**. This adapter is ready to accept a valid session, but no authenticated live response has been validated in the development environment. See [research and limitations](docs/data-sources.md).
+
+## Development and tests
+
+No dependency installation or build step is required:
 
 ```sh
 python3 -m http.server 8000 --bind 0.0.0.0
-node --test tests/sync-data.test.mjs
 node --check app.js
+node --test tests/sync-data.test.mjs
 ```
 
-For an authenticated refresh, securely provide `OSIRION_API_KEY` in the shell environment, optionally `OSIRION_EVENT_WINDOW_ID`, then run `node scripts/sync-data.mjs`. This consumes API credits and replaces the local public snapshot. Do not commit private/raw provider responses. Browser filters and saved sessions work locally. Font downloads are optional; system fonts are the fallback.
+For an authorized local data refresh, securely inject the variables above and run `node --use-env-proxy scripts/sync-data.mjs` with Node 24 in this managed environment. The script requests Epic directly, selects public fields, and atomically writes `data/tournaments.json`. It never publishes the token or account authentication response. Failed refreshes preserve the existing file. Actions deploys the checked-in snapshot if refresh fails; its status/timestamp is retained, rather than claiming it is fresh.
 
-## Data interpretation
+## Coverage
 
-- Only sessions indexed by Osirion in a bounded 14-day query are displayed. Eval and Division sessions appear when present in the provider response.
-- Identifiers, rather than invented names, identify the tournament and exact session.
-- Player statistics reflect parsed replays, not all lifetime Fortnite stats. Eliminations sorting is not official tournament rank. Missing metrics display `—`.
-- There is no browser-side API-key form. Arbitrary live player lookup remains an external Fortnite Tracker link.
-- No authenticated live-provider fetch was possible during implementation because no key was configured. Provider contracts were verified against Osirion's published SDK; tests mock the documented responses. See the research document for network restrictions and current-access uncertainties.
+The event list reflects the configured region, account eligibility, and Epic's available public event windows. Only page zero of the selected official leaderboard is fetched. Rows are teams ranked by Epic's `rank`; points use `pointsEarned`, never the packed internal `score`. Account IDs identify team members; display-name resolution and lifetime player statistics are not yet implemented. Missing metrics remain blank (`—`). This is a periodic snapshot, not instant live updates or a guarantee of every tournament.
 
-Independent fan project; not affiliated with Epic Games, Tracker Network, or Osirion.
+Independent fan project, not affiliated with Epic Games.

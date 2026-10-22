@@ -1,23 +1,29 @@
 import {test} from 'node:test';
 import assert from 'node:assert/strict';
-import {mkdtemp,readFile,rm} from 'node:fs/promises';
+import {mkdtemp,readFile,rm,writeFile} from 'node:fs/promises';
 import {tmpdir} from 'node:os';
 import {join} from 'node:path';
 import {sync,normalizeTournaments,normalizePlayers} from '../scripts/sync-data.mjs';
-const tournament={eventId:'epicgames_S34_PerformanceEvaluation_EU',eventWindowId:'S34_PerformanceEvaluation_Event1Round1_EU',startTime:1741370400,endTime:1741381200,totalMatches:20,parsingProgress:0.8};
-test('normalizes provider fields without inventing wins or K/D',()=>{
- assert.equal(normalizeTournaments({tournaments:[tournament]})[0].start,'2025-03-07T18:00:00.000Z');
- const [p]=normalizePlayers({players:[{epicId:'abc',epicUsername:'Test',matchesPlayed:3,eliminations:7}]});
- assert.equal(p.damage,null);assert.equal(p.eliminations,7);assert.equal('wins' in p,false);
- assert.throws(()=>normalizeTournaments({events:[]}));
+const accountId='a'.repeat(32);
+const event={eventId:'epicgames_S34_PerformanceEvaluation_EU',regions:['EU'],eventWindows:[{eventWindowId:'S34_PerformanceEvaluation_Event1Round1_EU',eventTemplateId:'duos',beginTime:'2025-03-07T18:00:00Z',endTime:'2025-03-07T21:00:00Z',visibility:'public'}]};
+const events={events:[event],templates:[{eventTemplateId:'duos',playlistId:'Playlist_Duos'}]};
+const standings={entries:[{teamAccountIds:['b'.repeat(32)],rank:1,pointsEarned:352,score:1548398805990442,sessionHistory:[]}],totalPages:30};
+test('normalizes Epic windows, template mode, and official points without using packed score',()=>{
+ const [t]=normalizeTournaments(events);assert.equal(t.id,event.eventWindows[0].eventWindowId);assert.equal(t.playlist,'Playlist_Duos');
+ const [p]=normalizePlayers(standings);assert.equal(p.points,352);assert.equal(p.rank,1);assert.equal(p.matches,0);
+ assert.throws(()=>normalizeTournaments({tournaments:[]}));assert.throws(()=>normalizePlayers({entries:[{rank:1}]}));
 });
-test('bounded authenticated fetches use documented paths and write a public snapshot',async()=>{
- const dir=await mkdtemp(join(tmpdir(),'dropzone-'));const output=join(dir,'snapshot.json');const requests=[];
- try{await sync({key:'test-only',windowId:tournament.eventWindowId,output,now:new Date('2025-03-08T00:00:00Z'),fetcher:async(url,options)=>{requests.push(new URL(url));assert.equal(options.headers.Authorization,'Bearer test-only');return {ok:true,json:async()=>url.includes('/stats?')?{players:[{epicId:'abc',eliminations:3}]}:{tournaments:[tournament]}};}});
- const raw=await readFile(output,'utf8');assert.equal(raw.includes('test-only'),false);assert.equal(requests.length,2);assert.equal(requests[0].pathname,'/fortnite/v1/tournaments');assert.equal(requests[1].searchParams.get('eventWindowId'),tournament.eventWindowId);assert.equal(JSON.parse(raw).players.length,1);
+test('direct Epic requests use scoped bearer auth and correct event/window paths',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'epic-test-'));const output=join(dir,'snapshot.json');const calls=[];
+ try{await sync({token:'test-only',accountId,windowId:event.eventWindows[0].eventWindowId,output,fetcher:async(url,options)=>{calls.push(new URL(url));assert.equal(options.headers.Authorization,'Bearer test-only');return {ok:true,json:async()=>url.includes('/leaderboards/')?standings:events};}});
+ const raw=await readFile(output,'utf8');assert.equal(raw.includes('test-only'),false);assert.equal(calls.length,2);assert.equal(calls[0].hostname,'events-public-service-live.ol.epicgames.com');assert.equal(calls[0].searchParams.get('region'),'EU');assert.equal(calls[1].searchParams.get('page'),'0');assert.equal(JSON.parse(raw).schemaVersion,2);
  }finally{await rm(dir,{recursive:true,force:true});}
 });
-test('missing key and provider failures cannot produce a success snapshot',async()=>{
- await assert.rejects(sync(),/OSIRION_API_KEY/);
- await assert.rejects(sync({key:'test-only',fetcher:async()=>({ok:false,status:401})}),/HTTP 401/);
+test('expired auth leaves the previous snapshot untouched',async()=>{
+ const dir=await mkdtemp(join(tmpdir(),'epic-test-'));const output=join(dir,'snapshot.json');
+ try{await writeFile(output,'previous');await assert.rejects(sync({token:'test-only',accountId,output,fetcher:async()=>({ok:false,status:401})}),/HTTP 401/);assert.equal(await readFile(output,'utf8'),'previous');}finally{await rm(dir,{recursive:true,force:true});}
+});
+test('missing authentication and unknown event windows fail clearly',async()=>{
+ await assert.rejects(sync(),/EPIC_ACCESS_TOKEN/);
+ await assert.rejects(sync({token:'test-only',accountId,windowId:'unknown',fetcher:async()=>({ok:true,json:async()=>events})}),/not in this region/);
 });

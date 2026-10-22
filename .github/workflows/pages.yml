@@ -26,6 +26,8 @@ jobs:
           node-version: '24'
       - name: Validate data pipeline
         run: node --test tests/sync-data.test.mjs
+      - name: Restore last published data
+        run: node scripts/restore-snapshot.mjs
       - name: Refresh direct Epic snapshot
         id: refresh
         # Authentication expiry must not prevent the website itself from deploying.
@@ -43,7 +45,7 @@ jobs:
           fi
       - name: Report refresh failure
         if: steps.refresh.outcome == 'failure'
-        run: echo '::warning::Epic refresh failed. Deploying the checked-in snapshot with its original status and timestamp.'
+        run: echo '::warning::Epic refresh failed. Keeping the last restored snapshot, or disconnected state, with its original timestamp.'
       - name: Configure Pages
         id: pages
         uses: actions/configure-pages@v5

@@ -1,6 +1,6 @@
 # Dropzone — independent Fortnite tournament tracker
 
-Static site with a direct Epic Games Events Service adapter. No Osirion, paid provider, or fabricated tournament data is used. It supports event windows (including Eval and Division Cups returned by Epic), region/mode/type filtering, saved sessions, and first-page official team standings for a selected session.
+Static site with a direct Epic Games Events Service adapter. No Osirion, paid provider, or fabricated tournament data is used. It supports event windows (including Eval and Division Cups returned by Epic), region/mode/type filtering, saved sessions, and bounded official team standings for active/recent sessions.
 
 ## Fix GitHub Pages: required once
 
@@ -24,7 +24,7 @@ In repository **Settings → Secrets and variables → Actions**:
 - Secret `EPIC_ACCESS_TOKEN`: an authorized, unexpired Epic bearer access token. Never share the token in chat or browser code.
 - Variable `EPIC_ACCOUNT_ID`: the matching 32-character Epic account ID.
 - Optional variable `EPIC_REGION`: `EU` (default), `NAC`, `NAE`, `NAW`, `ASIA`, `OCE`, `BR`, or `ME`.
-- Optional variable `EPIC_EVENT_WINDOW_ID`: an exact session ID from a tournament card. Its first standings page is fetched.
+- Optional variable `EPIC_EVENT_WINDOW_ID`: an exact session ID from a tournament card to override automatic selection. By default, up to three active/recent sessions are selected, with up to two pages each.
 - Optional variable `EPIC_SYNC_ENABLED=true`: enables approximately two-hour scheduled refreshes. This alone does not renew tokens.
 
 Run the Pages workflow manually after setting credentials. Access tokens expire: replace them through your own authorized Epic authentication process. Unattended token renewal is **not implemented**. This adapter is ready to accept a valid session, but no authenticated live response has been validated in the development environment. See [research and limitations](docs/data-sources.md).
@@ -39,10 +39,12 @@ node --check app.js
 node --test tests/sync-data.test.mjs
 ```
 
-For an authorized local data refresh, securely inject the variables above and run `node --use-env-proxy scripts/sync-data.mjs` with Node 24 in this managed environment. The script requests Epic directly, selects public fields, and atomically writes `data/tournaments.json`. It never publishes the token or account authentication response. Failed refreshes preserve the existing file. Actions deploys the checked-in snapshot if refresh fails; its status/timestamp is retained, rather than claiming it is fresh.
+For an authorized local data refresh, securely inject the variables above and run `node --use-env-proxy scripts/sync-data.mjs` with Node 24 in this managed environment. The script requests Epic directly, selects public fields, and atomically writes `data/tournaments.json`. It never publishes the token or account authentication response. Failed refreshes preserve the existing file. Actions first restores the last valid published snapshot. If refresh fails, it republishes that snapshot with its original timestamp, or the disconnected state when none exists.
 
 ## Coverage
 
-The event list reflects the configured region, account eligibility, and Epic's available public event windows. Only page zero of the selected official leaderboard is fetched. Rows are teams ranked by Epic's `rank`; points use `pointsEarned`, never the packed internal `score`. Account IDs identify team members; display-name resolution and lifetime player statistics are not yet implemented. Missing metrics remain blank (`—`). This is a periodic snapshot, not instant live updates or a guarantee of every tournament.
+The event list reflects the configured region, account eligibility, and Epic's available public event windows. Up to two pages for each of three selected sessions are fetched, with page coverage shown. Account names are resolved in batches; inaccessible names fall back to IDs. Rows are teams ranked by Epic's `rank`; points use `pointsEarned`, never the packed internal `score`. Lifetime player statistics are not yet implemented. Missing metrics remain blank (`—`). This is a periodic snapshot, not instant live updates or a guarantee of every tournament.
 
 Independent fan project, not affiliated with Epic Games.
+
+See [implementation plan and timeline](docs/implementation-plan.md) for milestones and the remaining authentication prerequisite.

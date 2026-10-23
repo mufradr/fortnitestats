@@ -1,10 +1,8 @@
-name: Deploy to GitHub Pages
+name: Deploy Daily Dive
 on:
   push:
     branches: [main]
   workflow_dispatch:
-  schedule:
-    - cron: '23 */2 * * *'
 permissions:
   contents: read
   pages: write
@@ -14,55 +12,21 @@ concurrency:
   cancel-in-progress: false
 jobs:
   deploy:
-    if: github.event_name != 'schedule' || vars.EPIC_SYNC_ENABLED == 'true'
+    runs-on: ubuntu-latest
     environment:
       name: github-pages
       url: ${{ steps.deployment.outputs.page_url }}
-    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: '24'
-      - name: Validate data pipeline
-        run: node --test tests/sync-data.test.mjs
-      - name: Restore last published data
-        run: node scripts/restore-snapshot.mjs
-      - name: Refresh direct Epic snapshot
-        id: refresh
-        # Authentication expiry must not prevent the website itself from deploying.
-        continue-on-error: true
-        env:
-          EPIC_ACCESS_TOKEN: ${{ secrets.EPIC_ACCESS_TOKEN }}
-          EPIC_ACCOUNT_ID: ${{ vars.EPIC_ACCOUNT_ID }}
-          EPIC_REGION: ${{ vars.EPIC_REGION }}
-          EPIC_EVENT_WINDOW_ID: ${{ vars.EPIC_EVENT_WINDOW_ID }}
+      - run: npm test
+      - uses: actions/configure-pages@v5
+      - name: Package static game
         run: |
-          if [ -n "$EPIC_ACCESS_TOKEN" ]; then
-            node scripts/sync-data.mjs
-          else
-            echo '::notice::Direct Epic authentication is not configured. The site will show its disconnected state.'
-          fi
-      - name: Report refresh failure
-        if: steps.refresh.outcome == 'failure'
-        run: echo '::warning::Epic refresh failed. Keeping the last restored snapshot, or disconnected state, with its original timestamp.'
-      - name: Configure Pages
-        id: pages
-        uses: actions/configure-pages@v5
-        with:
-          # Initial enablement requires an admin-authorized token, or the one-time Settings change.
-          enablement: ${{ secrets.PAGES_ADMIN_TOKEN != '' }}
-          token: ${{ secrets.PAGES_ADMIN_TOKEN || github.token }}
-      - name: Explain missing Pages setup
-        if: failure() && steps.pages.outcome == 'failure'
-        run: |
-          echo '::error::Enable Pages once at https://github.com/mufradr/fortnitestats/settings/pages and select GitHub Actions, then rerun this workflow.'
-      - name: Prepare static site
-        run: |
-          mkdir -p _site/data
-          cp index.html style.css app.js _site/
-          cp data/tournaments.json _site/data/
-          touch _site/.nojekyll
+          mkdir _site
+          cp index.html style.css app.js game.js questions.js .nojekyll _site/
       - uses: actions/upload-pages-artifact@v3
         with:
           path: _site
